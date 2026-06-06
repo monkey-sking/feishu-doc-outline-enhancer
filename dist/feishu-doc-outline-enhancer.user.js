@@ -247,24 +247,47 @@
   }
 
   async function enhancePopover() {
-    if (shouldSkipEnhance()) return false;
+    console.log(DEBUG_PREFIX, "enhancePopover called");
+
+    if (shouldSkipEnhance()) {
+      console.log(DEBUG_PREFIX, "Skipping enhance (throttled)");
+      return false;
+    }
 
     const docToken = getDocToken();
-    if (!docToken) return false;
+    console.log(DEBUG_PREFIX, "docToken:", docToken);
+    if (!docToken) {
+      console.log(DEBUG_PREFIX, "No docToken found");
+      return false;
+    }
 
     const folderInfo = getFolderInfo(docToken);
-    if (!folderInfo.token || !folderInfo.name) return false;
+    console.log(DEBUG_PREFIX, "folderInfo:", folderInfo);
+    if (!folderInfo.token || !folderInfo.name) {
+      console.log(DEBUG_PREFIX, "No folder token or name");
+      return false;
+    }
 
     isEnhancing = true;
     lastEnhanceAt = Date.now();
 
     try {
+      console.log(DEBUG_PREFIX, "Starting to resolve ancestor chain for:", folderInfo.token);
       const chain = await resolveAncestorChain(folderInfo.token);
+      console.log(DEBUG_PREFIX, "Ancestor chain resolved:", chain);
+
       const ancestors = chain.filter(
         (name, index, arr) =>
           name && name !== folderInfo.name && arr.indexOf(name) === index
       );
-      return injectAncestors(ancestors);
+      console.log(DEBUG_PREFIX, "Filtered ancestors:", ancestors);
+
+      const result = injectAncestors(ancestors);
+      console.log(DEBUG_PREFIX, "Injection result:", result);
+      return result;
+    } catch (error) {
+      console.error(DEBUG_PREFIX, "Error in enhancePopover:", error);
+      return false;
     } finally {
       isEnhancing = false;
     }
@@ -286,12 +309,20 @@
   }
 
   async function bootstrap() {
+    console.log(DEBUG_PREFIX, "Bootstrap started");
+
     for (let i = 0; i < 10; i += 1) {
-      if (getDocToken()) break;
+      const token = getDocToken();
+      console.log(DEBUG_PREFIX, `Bootstrap attempt ${i + 1}, token:`, token);
+      if (token) break;
       await sleep(1000);
     }
+
+    console.log(DEBUG_PREFIX, "Starting observer");
     observePopover();
+    console.log(DEBUG_PREFIX, "Bootstrap complete");
   }
 
+  console.log(DEBUG_PREFIX, "Script loaded, calling bootstrap");
   bootstrap();
 })();
