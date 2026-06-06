@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Feishu Doc Path Popover Enhancer
 // @namespace    https://my.feishu.cn/
-// @version      0.3.1
-// @description  Add parent folder items into the Feishu doc path popover.
+// @version      0.4.0
+// @description  Add parent folders into the native Feishu doc path popover.
 // @match        https://my.feishu.cn/docx/*
 // @grant        none
 // @run-at       document-idle
@@ -16,27 +16,11 @@
   const FOLDER_LIST_SELECTOR = ".styles__ContainerFoldersDiv-dxnPGn";
   const ITEM_SELECTOR = ".styles__ContainerItemBoxDiv-jfSIjK";
   const ITEM_TEXT_SELECTOR = ".styles__ContainerItemNameSpan-gaZNkf";
+  const DEBUG_PREFIX = "[Feishu Doc Path Popover Enhancer]";
+  const CACHE_TTL = 2 * 60 * 1000;
+  const MAX_LEVELS = 6;
 
-  const IGNORED_EXACT = new Set([
-    "Cloud Docs",
-    "Drive",
-    "Search",
-    "External",
-    "Share",
-    "Edit",
-    "Add shortcut to",
-    "Move to",
-    "Name",
-    "Owner",
-    "Modified time",
-    "Upload",
-    "New",
-    "Add",
-    "Template gallery",
-    "Description",
-    "No description",
-    "Collaborators",
-  ]);
+  const chainCache = new Map();
 
   function sleep(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -90,48 +74,25 @@
     };
   }
 
-  async function fetchFolderLines(folderUrl) {
-    const response = await fetch(folderUrl, { credentials: "include" });
-    const html = await response.text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    return textOf(doc.body?.textContent || "")
-      .split(/\r?\n/)
-      .map((line) => textOf(line))
-      .filter(Boolean);
+  function normalizeTitle(title) {
+    return textOf(String(title || "").replace(/\s*-\s*飞书云文档\s*$/, ""));
   }
 
-  function shouldIgnore(line, currentFolderName) {
-    if (!line) return true;
-    if (line === currentFolderName) return true;
-    if (IGNORED_EXACT.has(line)) return true;
-    if (line.startsWith("http")) return true;
-    return false;
-  }
-
-  function extractAncestors(lines, currentFolderName) {
-    const matches = [];
-    lines.forEach((line, index) => {
-      if (line === currentFolderName) matches.push(index);
-    });
-
-    let best = [];
-
-    for (const index of matches) {
-      const chain = [];
-      for (let i = index - 1; i >= Math.max(0, index - 12); i -= 1) {
-        const value = lines[i];
-        if (shouldIgnore(value, currentFolderName)) continue;
-        if (chain[0] !== value) {
-          chain.unshift(value);
-        }
-        if (chain.length >= 3) break;
-      }
-      if (chain.length > best.length) {
-        best = chain;
-      }
+  function getCachedChain(token) {
+    const record = chainCache.get(token);
+    if (!record) return null;
+    if (Date.now() - record.ts > CACHE_TTL) {
+      chainCache.delete(token);
+      return null;
     }
+    return record.chain.slice();
+  }
 
-    return best.filter((value, index, arr) => arr.indexOf(value) === index);
+  function setCachedChain(token, chain) {
+    chainCache.set(token, {
+      ts: Date.now(),
+      chain: chain.slice(),
+    });
   }
 
   function buildItem(template, label) {
@@ -146,6 +107,7 @@
       node.removeAttribute("href");
       node.removeAttribute("target");
       node.removeAttribute("rel");
+      node.setAttribute("type", "button");
     });
 
     item.style.opacity = "0.92";
@@ -169,15 +131,120 @@
     return true;
   }
 
+  function readFolderState(win) {
+    const state = win?.__store__?.getState?.();
+    const docToken =
+      toPlain(state?.appState?.currentNoteToken)?.obj_token ||
+      textOf(win?.DATA?.meta?.token) ||
+      "";
+    const map = toPlain(state?.appState?.shortcutLocationMap) || {};
+    const record = map?.[docToken] || {};
+    const title = normalizeTitle(win?.document?.title);
+    const parentToken = record?.objContainerTokenList?.[0] || "";
+
+    return {
+      docToken,
+      title,
+      parentToken,
+    };
+  }
+
+  async function loadFolderNode(folderToken) {
+    return new Promise((resolve, reject) => {
+      const iframe = document.createElement("iframe");
+      const url = `https://my.feishu.cn/drive/folder/${folderToken}?tm_path_popover=${Date.now()}`;
+
+      iframe.src = url;
+      iframe.setAttribute("aria-hidden", "true");
+      iframe.style.cssText =
+        "position:fixed;left:-9999px;top:-9999px;width:1280px;height:900px;opacity:0;pointer-events:none;border:0;";
+
+      let settled = false;
+      const cleanup = () => {
+        try {
+          iframe.remove();
+        } catch {}
+      };
+      const finish = (handler, value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        handler(value);
+      };
+
+      const timer = window.setTimeout(() => {
+        finish(reject, new Error(`Timed out loading folder ${folderToken}`));
+      }, 15000);
+
+      iframe.onload = () => {
+        const startedAt = Date.now();
+
+        const poll = () => {
+          try {
+            const info = readFolderState(iframe.contentWindow);
+            if (info.docToken && info.title) {
+              window.clearTimeout(timer);
+              finish(resolve, info);
+              return;
+            }
+          } catch (error) {
+            window.clearTimeout(timer);
+            finish(reject, error);
+            return;
+          }
+
+          if (Date.now() - startedAt > 12000) {
+            window.clearTimeout(timer);
+            finish(
+              reject,
+              new Error(`Folder state not ready for ${folderToken}`)
+            );
+            return;
+          }
+
+          window.setTimeout(poll, 400);
+        };
+
+        window.setTimeout(poll, 1200);
+      };
+
+      document.body.appendChild(iframe);
+    });
+  }
+
+  async function resolveAncestorChain(startToken) {
+    const cached = getCachedChain(startToken);
+    if (cached) return cached;
+
+    const chain = [];
+    const visited = new Set();
+    let currentToken = startToken;
+
+    for (let level = 0; level < MAX_LEVELS && currentToken; level += 1) {
+      if (visited.has(currentToken)) break;
+      visited.add(currentToken);
+
+      const info = await loadFolderNode(currentToken);
+      if (info.title) {
+        chain.unshift(info.title);
+      }
+
+      currentToken = info.parentToken;
+    }
+
+    setCachedChain(startToken, chain);
+    return chain.slice();
+  }
+
   async function enhancePopover() {
     const docToken = getDocToken();
     if (!docToken) return false;
 
     const folderInfo = getFolderInfo(docToken);
-    if (!folderInfo.token || !folderInfo.name || !folderInfo.url) return false;
+    if (!folderInfo.token || !folderInfo.name) return false;
 
-    const lines = await fetchFolderLines(folderInfo.url);
-    const ancestors = extractAncestors(lines, folderInfo.name);
+    const chain = await resolveAncestorChain(folderInfo.token);
+    const ancestors = chain.filter((name) => name && name !== folderInfo.name);
     return injectAncestors(ancestors);
   }
 
@@ -188,7 +255,7 @@
       if (popover.querySelector(`[${MARKER_ATTR}="true"]`)) return;
 
       enhancePopover().catch((error) => {
-        console.warn("[Feishu Doc Path Popover Enhancer]", error);
+        console.warn(DEBUG_PREFIX, error);
       });
     });
 
