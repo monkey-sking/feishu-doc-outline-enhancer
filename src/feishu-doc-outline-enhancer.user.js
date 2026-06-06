@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Feishu Doc Path Enhancer
+// @name         Feishu Doc Path Popover Enhancer
 // @namespace    https://my.feishu.cn/
-// @version      0.2.0
-// @description  Enhance the small Feishu doc header path area with parent folder context.
+// @version      0.3.0
+// @description  Show parent folder context inside the small Feishu doc path popover.
 // @match        https://my.feishu.cn/docx/*
 // @grant        none
 // @run-at       document-idle
@@ -11,8 +11,7 @@
 (function () {
   "use strict";
 
-  const STYLE_ID = "tm-feishu-path-enhancer-style";
-  const PATH_CLASS = "tm-feishu-path-enhancer";
+  const INJECT_MARKER = "tm-feishu-path-popover-enhanced";
   const BLACKLIST = new Set([
     "飞书云文档",
     "云盘",
@@ -23,6 +22,18 @@
     "最近修改",
     "分享",
     "编辑",
+    "添加快捷方式到",
+    "移动到",
+    "协作者",
+    "描述",
+    "暂无描述",
+    "所有者",
+    "名称",
+    "修改时间",
+    "上传",
+    "新建",
+    "添加",
+    "模板库",
   ]);
 
   function wait(ms) {
@@ -74,55 +85,7 @@
       token,
       name: safeText(pathNode?.textContent),
       url: token ? `https://my.feishu.cn/drive/folder/${token}` : "",
-      node: pathNode,
     };
-  }
-
-  function ensureStyle() {
-    if (document.getElementById(STYLE_ID)) return;
-
-    const style = document.createElement("style");
-    style.id = STYLE_ID;
-    style.textContent = `
-      .${PATH_CLASS} {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        min-width: 0;
-        font-size: 14px;
-        line-height: 20px;
-        color: #5f6670;
-      }
-
-      .${PATH_CLASS}__link,
-      .${PATH_CLASS}__current {
-        min-width: 0;
-        max-width: 220px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .${PATH_CLASS}__link {
-        color: #5f6670;
-        text-decoration: none;
-      }
-
-      .${PATH_CLASS}__link:hover {
-        color: #315efb;
-        text-decoration: underline;
-      }
-
-      .${PATH_CLASS}__sep {
-        color: #a0a7b3;
-        flex: 0 0 auto;
-      }
-
-      .${PATH_CLASS}__current {
-        color: #1f2329;
-      }
-    `;
-    document.head.appendChild(style);
   }
 
   async function fetchFolderText(folderUrl) {
@@ -132,100 +95,111 @@
     return safeText(doc.body?.textContent || "");
   }
 
-  function extractParentFolderName(folderText, currentFolderName) {
+  function extractAncestorNames(folderText, currentFolderName) {
     const lines = folderText
       .split(/\r?\n/)
       .map((line) => safeText(line))
       .filter(Boolean);
 
-    const indexes = [];
+    const matches = [];
     lines.forEach((line, index) => {
-      if (line === currentFolderName) indexes.push(index);
+      if (line === currentFolderName) {
+        matches.push(index);
+      }
     });
 
-    for (const index of indexes) {
-      for (let i = index - 1; i >= Math.max(0, index - 8); i -= 1) {
+    const best = [];
+
+    for (const index of matches) {
+      const chain = [];
+      for (let i = index - 1; i >= Math.max(0, index - 12); i -= 1) {
         const value = lines[i];
-        if (!value || value === currentFolderName || BLACKLIST.has(value)) continue;
-        return value;
+        if (!value || BLACKLIST.has(value) || value === currentFolderName) {
+          continue;
+        }
+        if (chain[0] !== value) {
+          chain.unshift(value);
+        }
+        if (chain.length >= 3) {
+          break;
+        }
+      }
+
+      if (chain.length > best.length) {
+        best.splice(0, best.length, ...chain);
       }
     }
 
-    return "";
+    return best.filter((value, index, arr) => arr.indexOf(value) === index);
   }
 
-  function renderInlinePath({ targetNode, parentName, folderName, folderUrl }) {
-    if (!targetNode || !folderName) return false;
-    ensureStyle();
+  function buildInjectedItem(text, template) {
+    const item = template.cloneNode(true);
+    item.setAttribute("data-tm-path-item", "true");
 
-    let mount = targetNode.parentElement.querySelector(`.${PATH_CLASS}`);
-    if (!mount) {
-      mount = document.createElement("span");
-      mount.className = PATH_CLASS;
-      targetNode.parentElement.insertBefore(mount, targetNode);
+    item.querySelectorAll(".styles__ContainerItemNameSpan-gaZNkf").forEach((node, index) => {
+      node.textContent = index === 0 ? text : "";
+    });
+
+    const icon = item.querySelector(".universe-icon");
+    if (icon) {
+      icon.style.color = "var(--icon-n2, #8f959e)";
     }
 
-    const parentPart = parentName
-      ? `<a class="${PATH_CLASS}__link" href="${folderUrl}" target="_blank" rel="noreferrer" title="${escapeHtml(parentName)}">${escapeHtml(parentName)}</a>
-         <span class="${PATH_CLASS}__sep">/</span>`
-      : "";
+    item.style.opacity = "0.92";
+    return item;
+  }
 
-    mount.innerHTML = `
-      ${parentPart}
-      <span class="${PATH_CLASS}__current" title="${escapeHtml(folderName)}">${escapeHtml(folderName)}</span>
-    `;
+  function injectIntoPopover(ancestorNames, currentFolderName) {
+    if (!ancestorNames.length || !currentFolderName) {
+      return false;
+    }
 
-    targetNode.style.display = "none";
+    const popover = document.querySelector(".workspace-suite-path-popover-new");
+    if (!popover || popover.querySelector(`[data-${INJECT_MARKER}]`)) {
+      return false;
+    }
+
+    const listContainer = popover.querySelector(".styles__ContainerFoldersDiv-dxnPGn");
+    const firstItem = listContainer?.querySelector(".styles__ContainerItemBoxDiv-jfSIjK");
+    if (!listContainer || !firstItem) {
+      return false;
+    }
+
+    const marker = document.createElement("div");
+    marker.setAttribute(`data-${INJECT_MARKER}`, "true");
+
+    ancestorNames.forEach((name) => {
+      marker.appendChild(buildInjectedItem(name, firstItem));
+    });
+
+    listContainer.insertBefore(marker, listContainer.firstChild);
     return true;
   }
 
-  function escapeHtml(text) {
-    return String(text)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
-
-  async function enhancePath() {
+  async function enhancePopover() {
     const docToken = getDocToken();
-    if (!docToken) return false;
+    if (!docToken) {
+      return false;
+    }
 
     const folderInfo = getFolderInfo(docToken);
-    if (!folderInfo.token || !folderInfo.name || !folderInfo.node) return false;
-
-    try {
-      const folderText = await fetchFolderText(folderInfo.url);
-      const parentName = extractParentFolderName(folderText, folderInfo.name);
-      return renderInlinePath({
-        targetNode: folderInfo.node,
-        parentName,
-        folderName: folderInfo.name,
-        folderUrl: folderInfo.url,
-      });
-    } catch (error) {
-      console.warn("[Feishu Doc Path Enhancer] Failed to enhance path:", error);
-      return renderInlinePath({
-        targetNode: folderInfo.node,
-        parentName: "",
-        folderName: folderInfo.name,
-        folderUrl: folderInfo.url,
-      });
+    if (!folderInfo.token || !folderInfo.name || !folderInfo.url) {
+      return false;
     }
+
+    const folderText = await fetchFolderText(folderInfo.url);
+    const ancestorNames = extractAncestorNames(folderText, folderInfo.name);
+    return injectIntoPopover(ancestorNames, folderInfo.name);
   }
 
-  async function bootstrap() {
-    for (let i = 0; i < 20; i += 1) {
-      const ok = await enhancePath();
-      if (ok) break;
-      await wait(1000);
-    }
-
+  function watchPopover() {
     const observer = new MutationObserver(() => {
-      const existing = document.querySelector(`.${PATH_CLASS}`);
-      if (!existing) {
-        enhancePath();
+      const popover = document.querySelector(".workspace-suite-path-popover-new");
+      if (popover && !popover.querySelector(`[data-${INJECT_MARKER}]`)) {
+        enhancePopover().catch((error) => {
+          console.warn("[Feishu Doc Path Popover Enhancer] Failed:", error);
+        });
       }
     });
 
@@ -233,6 +207,18 @@
       childList: true,
       subtree: true,
     });
+  }
+
+  async function bootstrap() {
+    for (let i = 0; i < 10; i += 1) {
+      const token = getDocToken();
+      if (token) {
+        break;
+      }
+      await wait(1000);
+    }
+
+    watchPopover();
   }
 
   bootstrap();

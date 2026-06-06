@@ -1,17 +1,17 @@
 # Feishu Doc Outline Enhancer
 
-Enhance the small Feishu doc header path area instead of adding a large extra panel.
+Enhance the small Feishu doc path popover instead of adding a large extra panel.
 
 ## What it does
 
-- Enhances the existing small header path area
-- Replaces the single folder label with `parent / current-folder`
-- Keeps the change inline, compact, and close to the native Feishu UI
-- Links the parent segment back to the current folder page
+- Enhances the existing small Feishu path popover
+- Injects parent folder names above the current folder item
+- Keeps the change inside the native popover instead of rendering a large extra block
+- Reuses the native popover item structure so it stays visually close to Feishu
 
 ## Why
 
-Feishu only shows one layer in the small header path area. This userscript focuses on that exact spot and adds parent-folder context there, instead of rendering a large separate block.
+Feishu only shows one layer inside the small path popover. This userscript focuses on that exact popup and adds parent-folder context there, instead of rendering a large separate block somewhere else.
 
 ## Install
 
@@ -29,11 +29,11 @@ The current version is designed against a real Feishu doc page and currently:
 - reads the current folder label from the Feishu header path
 - fetches the current folder page
 - heuristically extracts the parent folder name from the folder page text
-- rewrites the native header path area inline
+- injects extra folder rows into `.workspace-suite-path-popover-new`
 
 ## Limitations
 
-- The script currently targets the compact header path only.
+- The script currently targets the compact path popover only.
 - Parent-folder extraction is heuristic and based on current Feishu page text structure.
 - Feishu's internal DOM and state shape may change over time.
 
