@@ -21,6 +21,8 @@
   const MAX_LEVELS = 6;
 
   const chainCache = new Map();
+  let isEnhancing = false;
+  let lastEnhanceAt = 0;
 
   function sleep(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -131,6 +133,14 @@
     return true;
   }
 
+  function hasInjectedItems() {
+    return !!document.querySelector(`[${MARKER_ATTR}="true"]`);
+  }
+
+  function shouldSkipEnhance() {
+    return isEnhancing || Date.now() - lastEnhanceAt < 1200;
+  }
+
   function readFolderState(win) {
     const state = win?.__store__?.getState?.();
     const docToken =
@@ -237,22 +247,35 @@
   }
 
   async function enhancePopover() {
+    if (shouldSkipEnhance()) return false;
+
     const docToken = getDocToken();
     if (!docToken) return false;
 
     const folderInfo = getFolderInfo(docToken);
     if (!folderInfo.token || !folderInfo.name) return false;
 
-    const chain = await resolveAncestorChain(folderInfo.token);
-    const ancestors = chain.filter((name) => name && name !== folderInfo.name);
-    return injectAncestors(ancestors);
+    isEnhancing = true;
+    lastEnhanceAt = Date.now();
+
+    try {
+      const chain = await resolveAncestorChain(folderInfo.token);
+      const ancestors = chain.filter(
+        (name, index, arr) =>
+          name && name !== folderInfo.name && arr.indexOf(name) === index
+      );
+      return injectAncestors(ancestors);
+    } finally {
+      isEnhancing = false;
+    }
   }
 
   function observePopover() {
     const observer = new MutationObserver(() => {
       const popover = document.querySelector(POPUP_SELECTOR);
       if (!popover) return;
-      if (popover.querySelector(`[${MARKER_ATTR}="true"]`)) return;
+      if (hasInjectedItems()) return;
+      if (shouldSkipEnhance()) return;
 
       enhancePopover().catch((error) => {
         console.warn(DEBUG_PREFIX, error);
