@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Feishu Doc Path Popover Enhancer
 // @namespace    https://my.feishu.cn/
-// @version      0.4.0
+// @version      0.5.0
 // @description  Add parent folders into the native Feishu doc path popover.
 // @match        https://my.feishu.cn/docx/*
 // @grant        none
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
