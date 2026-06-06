@@ -142,18 +142,21 @@
   }
 
   function readFolderState(win) {
-    const state = win?.__store__?.getState?.();
-    const docToken =
-      toPlain(state?.appState?.currentNoteToken)?.obj_token ||
-      textOf(win?.DATA?.meta?.token) ||
-      "";
-    const map = toPlain(state?.appState?.shortcutLocationMap) || {};
-    const record = map?.[docToken] || {};
+    // Extract folder token from URL
+    const urlMatch = win?.location?.href?.match(/\/drive\/folder\/([^?&#]+)/);
+    const folderToken = urlMatch ? urlMatch[1] : "";
+
+    // Get title from document
     const title = normalizeTitle(win?.document?.title);
+
+    // Try to get parent from shortcutLocationMap (if available)
+    const state = win?.__store__?.getState?.();
+    const map = toPlain(state?.appState?.shortcutLocationMap) || {};
+    const record = map?.[folderToken] || {};
     const parentToken = record?.objContainerTokenList?.[0] || "";
 
     return {
-      docToken,
+      docToken: folderToken,
       title,
       parentToken,
     };
@@ -192,6 +195,7 @@
         const poll = () => {
           try {
             const info = readFolderState(iframe.contentWindow);
+            console.log(DEBUG_PREFIX, `Polling folder ${folderToken}:`, info);
             if (info.docToken && info.title) {
               window.clearTimeout(timer);
               finish(resolve, info);
@@ -212,7 +216,7 @@
             return;
           }
 
-          window.setTimeout(poll, 400);
+          window.setTimeout(poll, 800);
         };
 
         window.setTimeout(poll, 1200);
