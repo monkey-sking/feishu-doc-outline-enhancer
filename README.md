@@ -1,5 +1,9 @@
 # Feishu Doc Outline Enhancer
 
+<!-- badges:start -->
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](https://github.com/monkey-sking/feishu-doc-outline-enhancer/blob/main/LICENSE) [![Last commit](https://img.shields.io/github/last-commit/monkey-sking/feishu-doc-outline-enhancer?style=flat-square)](https://github.com/monkey-sking/feishu-doc-outline-enhancer/commits/main) [![JavaScript](https://img.shields.io/github/languages/top/monkey-sking/feishu-doc-outline-enhancer?style=flat-square)](https://github.com/monkey-sking/feishu-doc-outline-enhancer/search?l=JavaScript) [![views](https://hits.sh/github.com/monkey-sking/feishu-doc-outline-enhancer.svg?style=flat-square&label=views&color=0e75b6)](https://github.com/monkey-sking/feishu-doc-outline-enhancer)
+<!-- badges:end -->
+
 Enhance the small Feishu doc path popover instead of adding a large extra panel.
 
 ## What it does
